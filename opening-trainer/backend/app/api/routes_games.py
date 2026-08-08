@@ -1,0 +1,1 @@
+"""Games API routes placeholder."""

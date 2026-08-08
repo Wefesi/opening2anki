@@ -1,0 +1,1 @@
+"""AnkiConnect client placeholder."""

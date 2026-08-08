@@ -1,0 +1,1 @@
+"""Lichess API client placeholder."""

@@ -1,0 +1,16 @@
+{
+  "name": "Opening Trainer Card",
+  "modelName": "Opening Trainer Card",
+  "css": ".card { font-family: Arial; }",
+  "fields": [
+    { "name": "Question", "ord": 0 },
+    { "name": "Answer", "ord": 1 }
+  ],
+  "templates": [
+    {
+      "name": "Card 1",
+      "qfmt": "{{Question}}",
+      "afmt": "{{FrontSide}}<hr id=\"answer\">{{Answer}}"
+    }
+  ]
+}
