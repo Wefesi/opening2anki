@@ -1,73 +1,60 @@
-# Eröffnungstrainer – Komponentenübersicht v2 (mit AnkiConnect)
+# opening2anki – Component Overview (with AnkiConnect & Master Database)
 
-Update gegenüber v1: Statt eines eigenen Scheduling- und Review-Systems übernimmt **Anki** (via AnkiConnect) die Kartenverwaltung und das Spaced-Repetition-Scheduling. Das eigene System fokussiert sich auf Import, Analyse und Card-Generierung.
+Architecture overview: Instead of building a custom scheduling and review engine, **Anki** (via AnkiConnect) handles flashcard storage and spaced-repetition scheduling. The application focuses on game ingestion, opening analysis, and card generation.
 
-## Analyse-Pipeline
+### Core Card-Creation Principles:
+- **Zero-Config Opening Analysis:** No manual repertoire setup required by default.
+- **Master Opening Database + Stockfish:** Played moves are matched against a Master Games Opening Database (e.g., Lichess Masters Explorer API / Polyglot book with local SQLite caching).
+- **First Bad Deviation in Opening:** When a move leaves established theory, Stockfish calculates the centipawn loss. If it exceeds a configurable threshold (inaccuracy/mistake), exactly **one** Anki card is created for that position (first opening mistake of the game).
+- **No Midgame/Endgame Blunder Cards:** Once the opening phase concludes (or the first deviation occurs), no further cards are generated for that game.
+- **Modularity:** Opening theory queries use a modular `OpeningBookProvider` interface, allowing optional personal repertoire trees (PGN) to be plugged in seamlessly.
 
-| Komponente | Verantwortung | Technologie |
+## Analysis Pipeline
+
+| Component | Responsibility | Technology |
 |---|---|---|
-| PGN-Importer | Liest PGN-Dateien/-Strings ein, normalisiert Partien | Python, `python-chess` |
-| Repertoire-Loader | Baut Repertoire-Baum aus PGN mit Haupt-/Nebenvarianten | Python, `python-chess` |
-| Deviation-Detector | Findet ersten Abweichungspunkt vom Repertoire | Python (eigene Logik) |
-| Engine-Analyzer | Berechnet Centipawn-Verlust pro Zug | Stockfish (Binary) + `python-chess` UCI-Wrapper |
-| Card-Generator | Erstellt Frage/Antwort-Inhalt inkl. Stellungsbild | Python, `python-chess` SVG-Export bzw. `cairosvg` |
+| PGN Importer | Ingests PGN files/strings, normalizes games | Python, `python-chess` |
+| Opening Book Provider | Modular interface: Master Database (Lichess Masters API + local cache) or optional personal repertoire | Python (`OpeningBookProvider` interface) |
+| Engine Analyzer | Calculates centipawn loss & best moves when leaving theory | Stockfish (binary) + `python-chess` UCI wrapper |
+| Deviation Detector | Identifies the first bad opening deviation (book exit + CP loss $\ge$ threshold) | Python |
+| Card Generator | Builds question/answer card content with board diagram (SVG before deviation) | Python, `python-chess` SVG export |
 
-## Integration & Automatisierung
+## Integration & Automation
 
-| Komponente | Verantwortung | Technologie |
+| Component | Responsibility | Technology |
 |---|---|---|
-| API-Client | Holt neue Partien von Lichess/Chess.com | Python `requests`, Lichess-/Chess.com-REST-API |
-| Sync-Service | Triggert die Pipeline periodisch oder manuell | `APScheduler` oder Cron-Job |
-| AnkiConnect-Client | Legt Karten in Anki an/aktualisiert sie, ohne Scheduling anzufassen | Python `requests` → AnkiConnect-Add-on (`localhost:8765`) |
+| Platform Client | Fetches new games from Lichess / Chess.com | Python `requests`, Lichess / Chess.com REST API |
+| Sync Service | Triggers the pipeline periodically or on-demand | `APScheduler` or cron job |
+| AnkiConnect Client | Creates/updates notes in Anki without altering scheduling state | Python `requests` → AnkiConnect add-on (`localhost:8765`) |
 
-## Datenhaltung
+## Data Persistence
 
-| Komponente | Verantwortung | Technologie |
+| Component | Responsibility | Technology |
 |---|---|---|
-| games | Importierte Partien, Verarbeitungsstatus | SQLite |
-| repertoire_entries | Knoten des Repertoire-Baums | SQLite |
-| card_mapping | Stabile ID (Hash aus FEN + Zug) → Anki-Note-ID, verhindert Duplikate | SQLite |
-| Anki-Collection | Karteninhalte & komplettes Scheduling (SM-2/FSRS) | Anki selbst (`.anki2`), lokal auf dem Rechner |
+| `games` | Ingested games and processing status | SQLite |
+| `opening_cache` | Cache for Master DB position queries & theoretical stats | SQLite |
+| `repertoires` / `repertoire_entries` | *(Optional)* Repertoire variation trees for users providing custom PGNs | SQLite |
+| `card_mapping` | Stable ID (hash of FEN + move + type) → Anki note ID, preventing duplicate cards | SQLite |
+| Anki Collection | Flashcard content and full spaced-repetition scheduling (SM-2/FSRS) | Anki itself (`.anki2`), local desktop |
 
-**Warum SQLite statt Postgres:** Passt zu Option A (Zero-Config-Installation für andere Nutzer – kein zusätzlicher DB-Server nötig). Zugriff über ein ORM (`SQLAlchemy` oder `SQLModel`), damit ein späterer Wechsel auf Postgres (z. B. bei Option B/Hosting) nur eine geänderte Connection-String-Zeile ist, kein Rewrite.
+**Why SQLite:** Fits the self-hosted, zero-config distribution model (no separate database server required). All access goes through `SQLModel` / `SQLAlchemy` ORM classes, making a future Postgres migration a one-line connection string change if ever needed.
 
-## Dashboard-UI (grafisch)
+## Dashboard UI (Graphical)
 
-| Komponente | Verantwortung | Technologie |
+| Component | Responsibility | Technology |
 |---|---|---|
-| Dashboard-API | Stellt Sync, Repertoire-Verwaltung und Statistiken als REST-Endpunkte bereit | FastAPI |
-| Dashboard-UI | Grafische Oberfläche: Sync anstoßen, Repertoire pflegen, Statistiken & Repertoire-Baum ansehen | React (Vite) + Tailwind CSS, `Recharts` für Diagramme |
+| Dashboard API | Exposes sync, game analysis, settings, and statistics | FastAPI |
+| Dashboard UI | Graphical interface: trigger syncs, inspect analyzed games & deviations, configure thresholds | React (Vite) + Tailwind CSS, `Recharts` for charts |
 
-*Alternative mit weniger Kontextwechsel:* Falls ein separates React-Frontend zu viel JS-Aufwand ist, baut `Reflex` (reines Python, kompiliert zu einer modernen React-Oberfläche) dieselbe Funktionalität ohne eigenen JS-Code.
+## Packaging & Sharing (Open-Source Tool)
 
-## Entfallene Komponenten (durch Anki ersetzt)
+To allow other users to clone and run the tool locally with their own Anki + Stockfish:
 
-- Eigener SM-2-Scheduler
-- Eigene Review-Session-UI mit Schachbrett-Widget
-- Eigene `cards`-/`review_log`-Tabellen mit Scheduling-Feldern
-
-## Packaging & Sharing (Open-Source-Tool)
-
-Damit andere das Projekt selbst installieren und mit ihrem eigenen Anki nutzen können:
-
-| Baustein | Zweck |
+| Component | Purpose |
 |---|---|
-| `README.md` | Installationsschritte, Voraussetzungen (Python, Stockfish-Binary, Anki + AnkiConnect-Add-on), Quickstart |
-| `config.yaml` / `.env` | Nutzerspezifisch: Lichess-/Chess.com-Username, Pfad zur Repertoire-PGN, Blunder-Schwellenwert, Stockfish-Pfad |
-| `pyproject.toml` | Sauberes Packaging (`pip install -e .`), definierte Dependencies (`python-chess`, `requests`, etc.) |
-| Anki-Note-Type-Vorlage | Mitgelieferte `.json`-Definition für das erwartete Kartenformat (Feld für Stellungsbild, Zug, Kontext), damit AnkiConnect-Client und Anki-Deck zusammenpassen |
-| `examples/` | Beispiel-Repertoire-PGN, damit Neulinge das Tool direkt ausprobieren können, bevor sie ihr eigenes Repertoire hinterlegen |
-| Lizenz (z. B. MIT) | Klarheit, dass/wie andere den Code nutzen und verändern dürfen |
+| `README.md` | Setup steps, prerequisites (Python, Stockfish binary, Anki + AnkiConnect add-on), quickstart |
+| `config.yaml` / `.env` | User config: Lichess/Chess.com usernames, threshold settings, Stockfish path, Anki deck name |
+| `pyproject.toml` | Packaging (`pip install -e .`), dependency declarations (`python-chess`, `requests`, etc.) |
+| Anki Note Type Template | Included `.json` definition for the card format (board diagram, played move, correct move, stats) |
+| License (e.g., MIT) | Open-source distribution license |
 
-## Gesamt-Tech-Stack
-
-- Python 3.x
-- `python-chess`
-- Stockfish (lokale Binary)
-- SQLite (Zugriff über `SQLAlchemy` oder `SQLModel`)
-- `requests`
-- AnkiConnect (Anki-Add-on – Anki muss lokal installiert und geöffnet sein)
-- `APScheduler` für periodischen Sync
-- `FastAPI` (Dashboard-Backend)
-- React (Vite) + Tailwind CSS + `Recharts` (Dashboard-Frontend) – alternativ `Reflex` (reines Python)
-- Alternative zu AnkiConnect: `genanki` für einmaligen `.apkg`-Export statt Live-Sync
